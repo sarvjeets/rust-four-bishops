@@ -16,8 +16,8 @@ impl Position {
     }
 
     fn from_u32(pos: u32) -> Self {
-        Position::new((pos / 4).try_into().unwrap(),
-                      (pos % 4).try_into().unwrap())
+        let pos: u8 = pos.try_into().unwrap();
+        Position::new(pos / 4, pos % 4)
     }
 }
 
@@ -59,18 +59,18 @@ impl Board {
         for position in self.white_pos {
             let pos = position.to_u32();
             if pos % 2 == 0 {
-                white_even_pos = (white_even_pos << 4) | (pos / 2);
+                white_even_pos = white_even_pos << 4 | pos / 2;
             } else {
-                white_odd_pos = (white_odd_pos << 4) | (pos / 2);
+                white_odd_pos = white_odd_pos << 4 | pos / 2;
             }
         }
 
         for position in self.black_pos {
             let pos = position.to_u32();
             if pos % 2 == 0 {
-                black_even_pos = (black_even_pos << 4) | (pos / 2);
+                black_even_pos = black_even_pos << 4 | pos / 2;
             } else {
-                black_odd_pos = (black_odd_pos << 4) | (pos / 2);
+                black_odd_pos = black_odd_pos << 4 | pos / 2;
             }
         }
 
@@ -81,8 +81,8 @@ impl Board {
     fn from_u32(encoded: u32) -> Self {
         let mask_8bit = 0x000000FFu32;
         let white_even_pos = encoded >> 24;
-        let white_odd_pos = (encoded & (mask_8bit << 16)) >> 16;
-        let black_even_pos = (encoded & (mask_8bit << 8)) >> 8;
+        let white_odd_pos = (encoded & mask_8bit << 16) >> 16;
+        let black_even_pos = (encoded & mask_8bit << 8) >> 8;
         let black_odd_pos = encoded & mask_8bit;
 
         let mask_4bit = 0x0000000Fu32;
