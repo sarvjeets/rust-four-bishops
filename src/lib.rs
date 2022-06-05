@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Clone, Debug, PartialEq)]
 struct Position {
     x: u8,  // The x cordinate, 0 <= x < 5
@@ -21,16 +23,14 @@ impl Position {
     }
 }
 
+enum Color {
+    White,
+    Black
+}
+
 struct Board {
     white_pos: [Position; 4],
     black_pos: [Position; 4],
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Piece {
-    White,
-    Black,
-    Empty
 }
 
 impl Board {
@@ -100,18 +100,79 @@ impl Board {
         Board::from_pos(white_pos, black_pos)
     }
 
-    fn get_piece(&self, given_pos: Position) -> Piece {
-        for pos in self.white_pos.iter() {
-            if given_pos == *pos {
-                return Piece::White;
+    fn get_array(&self, color: Color) -> [bool; 20] {
+        fn get_array(positions : &[Position; 4]) -> [bool; 20] {
+            let mut ret = [false; 20];
+            for i in positions.iter().map(|p| p.clone().to_u32() as usize) {
+                ret[i] = true;
+            }
+            ret
+        }
+        match color {
+            Color::White => return get_array(&self.white_pos),
+            Color::Black => return get_array(&self.black_pos)
+        }
+    }
+
+    // Returns all positions threatened by color pieces.
+    fn threatened_array(&self, color: Color) -> [bool; 20] {
+        let mut ret = [false; 20];
+
+        let positions = match color {
+            Color::White => &self.white_pos,
+            Color::Black => &self.black_pos
+        };
+
+        fn inside(x: i16, y: i16) -> bool {
+            x >= 0 && y >= 0 && x < 5 && y < 4
+        }
+
+        for pos in positions {
+            let Position{x, y} = pos;
+            let direction : [(i16, i16); 4] = [
+                (-1, -1), (-1, 1), (1, -1), (1, 1)];
+            for dir in direction.into_iter() {
+                for i in 1..4 {
+                    let x = *x as i16 + i * dir.0;
+                    let y = *y as i16 + i * dir.1;
+
+                    if !inside(x, y) {
+                        break;
+                    }
+
+                    ret[Position::new(x as u8, y as u8).to_u32()
+                        as usize] = true;
+                }
             }
         }
-        for pos in self.black_pos.iter() {
-            if given_pos == *pos {
-                return Piece::Black;
+        ret
+    }
+
+}
+
+// Provide a printer for Board.
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "+---+---+---+---+---+")?;
+        let white_array = self.get_array(Color::White);
+        let black_array = self.get_array(Color::Black);
+
+        for y in 0..4 {
+            write!(f,  "\n|")?;
+            for x in 0..5 {
+                let index = Position::new(x, y).to_u32() as usize;
+                let piece = if white_array[index] {
+                    'W'
+                } else if black_array[index] {
+                    'B'
+                } else {
+                    ' '
+                };
+                write!(f, " {} |", piece)?;
             }
+            write!(f, "\n+---+---+---+---+---+")?
         }
-        Piece::Empty
+        Ok(())
     }
 }
 
@@ -120,7 +181,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_valid_position() {
+    fn test_new_valid_position() {
         let p = Position::new(1,2);
         assert_eq!(p.x, 1);
         assert_eq!(p.y, 2);
@@ -128,17 +189,35 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn invalid_position() {
+    fn test_invalid_position() {
         let _ = Position::new(5, 0);
     }
 
     #[test]
-    fn new_board() {
-        let board = Board::new();
-        let board = Board::from_u32(board.to_u32());
+    fn test_board_conversions() {
+        let board = Board::from_u32(Board::new().to_u32());
+        let white_array = board.get_array(Color::White);
+        let black_array = board.get_array(Color::Black);
         for i in 0..4 {
-            assert_eq!(board.get_piece(Position::new(0, i)), Piece::White);
-            assert_eq!(board.get_piece(Position::new(4, i)), Piece::Black);
+            assert!(white_array[Position::new(0, i).to_u32() as usize]);
+            assert!(black_array[Position::new(4, i).to_u32() as usize]);
         }
+    }
+
+    #[test]
+    fn test_threatened() {
+        let board = Board::new();
+        let threatened_array = board.threatened_array(Color::White);
+        println!("{:?}", threatened_array);
+        for y in 0..3 {
+            assert!(!threatened_array[Position::new(0, y).to_u32() as usize]);
+            assert!(threatened_array[Position::new(1, y).to_u32() as usize]);
+            assert!(threatened_array[Position::new(2, y).to_u32() as usize]);
+            assert!(!threatened_array[Position::new(4, y).to_u32() as usize]);
+        }
+        assert!(threatened_array[Position::new(3, 0).to_u32() as usize]);
+        assert!(!threatened_array[Position::new(3, 1).to_u32() as usize]);
+        assert!(!threatened_array[Position::new(3, 2).to_u32() as usize]);
+        assert!(threatened_array[Position::new(3, 3).to_u32() as usize]);
     }
 }
