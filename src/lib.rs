@@ -1,3 +1,4 @@
+use bit_vec::BitVec;
 use std::fmt;
 
 #[derive(Clone, Debug)]
@@ -21,7 +22,7 @@ impl Direction {
 }
 
 impl Position {
-    fn new(x: u8, y: u8) -> Position {
+    pub fn new(x: u8, y: u8) -> Position {
         assert!(x < 5);
         assert!(y < 4);
         Position {x, y}
@@ -31,23 +32,9 @@ impl Position {
         (4 * self.x + self.y) as usize
     }
 
-    // Encodes position in 4 bits.
-    fn as_compact(&self) -> (Color, u32) {
-        let c = if (self.x + self.y) % 2 == 0 {
-            Color::White
-        } else {
-            Color::Black
-        };
-        (c, (2 * self.x + self.y / 2) as u32)
-    }
-
-    fn from_compact(c: Color, val: u32) -> Position {
-        let x = val / 2;
-        let y = (val % 2) * 2 + (match c {
-            Color::White => x % 2,
-            Color::Black => (x + 1) % 2
-        });
-        Position::new(x as u8, y as u8)
+    fn from_usize(pos: usize) -> Self {
+        let pos: u8 = pos.try_into().unwrap();
+        Position::new(pos / 4, pos % 4)
     }
 }
 
@@ -116,62 +103,53 @@ impl Board {
         Board{white_pos, black_pos}
     }
 
-    fn as_u32(&self) -> u32 {
-        let mut white_white_pos = 0u32;
-        let mut white_black_pos = 0u32;
-        let mut black_white_pos = 0u32;
-        let mut black_black_pos = 0u32;
-
-        fn update(val: &mut u32, new_val: u32) -> () {
-            if *val == 0 {
-                *val = new_val;
-            } else if *val > new_val {
-                *val = *val << 4 | new_val;
-            } else {
-                *val = new_val << 4 | *val;
-            }
-        }
-
+    fn as_u64(&self) -> u64 {
+        let mut bv = BitVec::from_elem(64, false);
         for position in &self.white_pos {
-            let (c, val) = position.as_compact();
-            match c {
-                Color::White => update(&mut white_white_pos, val),
-                Color::Black => update(&mut white_black_pos, val),
-            };
+            bv.set(position.as_usize(), true);
         }
 
         for position in &self.black_pos {
-            let (c, val) = position.as_compact();
-            match c {
-                Color::White => update(&mut black_white_pos, val),
-                Color::Black => update(&mut black_black_pos, val),
-            };
+            bv.set(20 + position.as_usize(), true);
         }
 
-        white_white_pos << 24 | white_black_pos << 16
-        | black_white_pos << 8 | black_black_pos
+        let bytes = bv.to_bytes();
+        assert_eq!(bytes.len(), 8);
+
+        let mut ret = 0u64;
+        for b in bytes {
+            ret = ret << 8 | b as u64;
+        }
+
+        ret
     }
 
-    fn from_u32(encoded: u32) -> Self {
-        let mask_8bit = 0x000000FFu32;
-        let white_white_pos = encoded >> 24;
-        let white_black_pos = (encoded & mask_8bit << 16) >> 16;
-        let black_white_pos = (encoded & mask_8bit << 8) >> 8;
-        let black_black_pos = encoded & mask_8bit;
+    fn from_u64(encoded: u64) -> Self {
+        let mask_8bit = 0xFFu64;
 
-        let mask_4bit = 0x0000000Fu32;
-        let white_pos = [
-            Position::from_compact(Color::White, white_white_pos >> 4),
-            Position::from_compact(Color::White, white_white_pos & mask_4bit),
-            Position::from_compact(Color::Black, white_black_pos >> 4),
-            Position::from_compact(Color::Black, white_black_pos & mask_4bit)];
+        let mut encoded = encoded;
+        let mut bytes = Vec::new();
+        for _ in 0..8 {
+            bytes.insert(0, (encoded & mask_8bit) as u8);
+            encoded = encoded >> 8;
+        }
 
-        let black_pos = [
-            Position::from_compact(Color::White, black_white_pos >> 4),
-            Position::from_compact(Color::White, black_white_pos & mask_4bit),
-            Position::from_compact(Color::Black, black_black_pos >> 4),
-            Position::from_compact(Color::Black, black_black_pos & mask_4bit)];
-        Board::from_pos(white_pos, black_pos)
+        let bv = BitVec::from_bytes(&bytes);
+        let mut white_pos = Vec::new();
+        for pos in 0..20 {
+            if bv[pos] {
+                white_pos.push(Position::from_usize(pos));
+            }
+        }
+        let mut black_pos = Vec::new();
+        for pos in 0..20 {
+            if bv[pos + 20] {
+                black_pos.push(Position::from_usize(pos));
+            }
+        }
+
+        Board::from_pos(white_pos.try_into().unwrap(),
+                        black_pos.try_into().unwrap())
     }
 
     fn get_array(&self, color: &Color) -> [bool; 20] {
@@ -283,10 +261,10 @@ impl fmt::Display for Board {
 pub fn bfs(start: Board, end : Board) -> () {
     use std::collections::HashMap;
 
-    let end_u32 = end.as_u32();
-    let mut next_nodes = vec![Board::new()];
+    let end_u64 = end.as_u64();
     let mut visited_nodes = HashMap::new();
-    visited_nodes.insert(start.as_u32(), 0u32);
+    visited_nodes.insert(start.as_u64(), 0u64);
+    let mut next_nodes = vec![start];
 
     let mut to_move = Color::White;
     let mut num_moves = 0;
@@ -295,27 +273,27 @@ pub fn bfs(start: Board, end : Board) -> () {
         let mut new_next_nodes = Vec::new();
         for board in next_nodes {
             //println!("Processing:\n{}", board);
-            let board_u32 = board.as_u32();
-            if board_u32 == end_u32 {
+            let board_u64 = board.as_u64();
+            if board_u64 == end_u64 {
                 // Found solution.
                 println!("Solution found in {} moves.", num_moves);
-                return ();
                 let mut sol = Vec::new();
-                let mut curr = &end_u32;
+                let mut curr = &end_u64;
                 while *curr != 0 {
                     sol.push(curr);
                     curr = visited_nodes.get(&curr).unwrap();
                 }
 
                 for s in sol.iter().rev() {
-                    println!("{}", Board::from_u32(**s));
+                    println!("{}", Board::from_u64(**s));
                 }
+                return ();
             }
 
             for next_board in board.next_boards(&to_move) {
-                let key = next_board.as_u32();
+                let key = next_board.as_u64();
                 if !visited_nodes.contains_key(&key) {
-                    visited_nodes.insert(key, board_u32);
+                    visited_nodes.insert(key, board_u64);
                     new_next_nodes.push(next_board);
                 }
             }
@@ -325,6 +303,7 @@ pub fn bfs(start: Board, end : Board) -> () {
         to_move = to_move.invert();
         next_nodes = new_next_nodes;
     }
+    println!("No solution");
 }
 
 #[cfg(test)]
@@ -346,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_board_conversions() {
-        let board = Board::from_u32(Board::new().as_u32());
+        let board = Board::from_u64(Board::new().as_u64());
         let white_array = board.get_array(&Color::White);
         let black_array = board.get_array(&Color::Black);
         for i in 0..4 {
@@ -373,9 +352,15 @@ mod tests {
 
     #[test]
     fn test_new_move() {
-        let board = Board::new();
-        let next_boards = board.next_boards(&Color::White);
-        assert_eq!(next_boards.len(), 4);
+        let board = Board::from_pos(
+            [Position::new(4,0), Position::new(3,2), Position::new(4,2), Position::new(4, 3)],
+            [Position::new(0,0), Position::new(0,1), Position::new(1,1), Position::new(3, 0)]);
+        let next_boards = board.next_boards(&Color::Black);
+        println!("{}", board);
+        for b in next_boards {
+            println!("{}", b);
+        }
+        assert_eq!(3, 3);
     }
 
 }
