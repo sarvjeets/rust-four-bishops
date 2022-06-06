@@ -27,13 +27,27 @@ impl Position {
         Position {x, y}
     }
 
-    fn as_u32(&self) -> u32 {
-        (4 * self.x + self.y) as u32
+    fn as_usize(&self) -> usize {
+        (4 * self.x + self.y) as usize
     }
 
-    fn from_u32(pos: u32) -> Self {
-        let pos: u8 = pos.try_into().unwrap();
-        Position::new(pos / 4, pos % 4)
+    // Encodes position in 4 bits.
+    fn as_compact(&self) -> (Color, u32) {
+        let c = if (self.x + self.y) % 2 == 0 {
+            Color::White
+        } else {
+            Color::Black
+        };
+        (c, (2 * self.x + self.y / 2) as u32)
+    }
+
+    fn from_compact(c: Color, val: u32) -> Position {
+        let x = val / 2;
+        let y = (val % 2) * 2 + (match c {
+            Color::White => x % 2,
+            Color::Black => (x + 1) % 2
+        });
+        Position::new(x as u8, y as u8)
     }
 }
 
@@ -103,59 +117,67 @@ impl Board {
     }
 
     fn as_u32(&self) -> u32 {
-        let mut white_even_pos = 0u32;
-        let mut white_odd_pos = 0u32;
-        let mut black_even_pos = 0u32;
-        let mut black_odd_pos = 0u32;
+        let mut white_white_pos = 0u32;
+        let mut white_black_pos = 0u32;
+        let mut black_white_pos = 0u32;
+        let mut black_black_pos = 0u32;
+
+        fn update(val: &mut u32, new_val: u32) -> () {
+            if *val == 0 {
+                *val = new_val;
+            } else if *val > new_val {
+                *val = *val << 4 | new_val;
+            } else {
+                *val = new_val << 4 | *val;
+            }
+        }
 
         for position in &self.white_pos {
-            let pos = position.as_u32();
-            if pos % 2 == 0 {
-                white_even_pos = white_even_pos << 4 | pos / 2;
-            } else {
-                white_odd_pos = white_odd_pos << 4 | pos / 2;
-            }
+            let (c, val) = position.as_compact();
+            match c {
+                Color::White => update(&mut white_white_pos, val),
+                Color::Black => update(&mut white_black_pos, val),
+            };
         }
 
         for position in &self.black_pos {
-            let pos = position.as_u32();
-            if pos % 2 == 0 {
-                black_even_pos = black_even_pos << 4 | pos / 2;
-            } else {
-                black_odd_pos = black_odd_pos << 4 | pos / 2;
-            }
+            let (c, val) = position.as_compact();
+            match c {
+                Color::White => update(&mut black_white_pos, val),
+                Color::Black => update(&mut black_black_pos, val),
+            };
         }
 
-        white_even_pos << 24 | white_odd_pos << 16
-        | black_even_pos << 8 | black_odd_pos
+        white_white_pos << 24 | white_black_pos << 16
+        | black_white_pos << 8 | black_black_pos
     }
 
     fn from_u32(encoded: u32) -> Self {
         let mask_8bit = 0x000000FFu32;
-        let white_even_pos = encoded >> 24;
-        let white_odd_pos = (encoded & mask_8bit << 16) >> 16;
-        let black_even_pos = (encoded & mask_8bit << 8) >> 8;
-        let black_odd_pos = encoded & mask_8bit;
+        let white_white_pos = encoded >> 24;
+        let white_black_pos = (encoded & mask_8bit << 16) >> 16;
+        let black_white_pos = (encoded & mask_8bit << 8) >> 8;
+        let black_black_pos = encoded & mask_8bit;
 
         let mask_4bit = 0x0000000Fu32;
         let white_pos = [
-            Position::from_u32((white_even_pos >> 4) * 2),
-            Position::from_u32((white_even_pos & mask_4bit) * 2),
-            Position::from_u32((white_odd_pos >> 4) * 2 + 1),
-            Position::from_u32((white_odd_pos & mask_4bit) * 2 + 1)];
+            Position::from_compact(Color::White, white_white_pos >> 4),
+            Position::from_compact(Color::White, white_white_pos & mask_4bit),
+            Position::from_compact(Color::Black, white_black_pos >> 4),
+            Position::from_compact(Color::Black, white_black_pos & mask_4bit)];
 
         let black_pos = [
-            Position::from_u32((black_even_pos >> 4) * 2),
-            Position::from_u32((black_even_pos & mask_4bit) * 2),
-            Position::from_u32((black_odd_pos >> 4) * 2 + 1),
-            Position::from_u32((black_odd_pos & mask_4bit) * 2 + 1)];
+            Position::from_compact(Color::White, black_white_pos >> 4),
+            Position::from_compact(Color::White, black_white_pos & mask_4bit),
+            Position::from_compact(Color::Black, black_black_pos >> 4),
+            Position::from_compact(Color::Black, black_black_pos & mask_4bit)];
         Board::from_pos(white_pos, black_pos)
     }
 
     fn get_array(&self, color: &Color) -> [bool; 20] {
         fn get_array(positions : &[Position; 4]) -> [bool; 20] {
             let mut ret = [false; 20];
-            for i in positions.iter().map(|p| p.as_u32() as usize) {
+            for i in positions.iter().map(|p| p.as_usize()) {
                 ret[i] = true;
             }
             ret
@@ -179,7 +201,7 @@ impl Board {
             for dir in Direction::get_directions() {
                 let moves = Moves{pos : pos.clone(), dir};
                 for valid_move in moves {
-                    ret[valid_move.as_u32() as usize] = true;
+                    ret[valid_move.as_usize()] = true;
                 }
             }
         }
@@ -206,7 +228,7 @@ impl Board {
             for dir in Direction::get_directions() {
                 let moves = Moves{pos : pos.clone(), dir};
                 for valid_move in moves {
-                    let new_index = valid_move.as_u32() as usize;
+                    let new_index = valid_move.as_usize();
                     if my_color_pieces[new_index] {
                         break;
                     }
@@ -241,7 +263,7 @@ impl fmt::Display for Board {
         for y in 0..4 {
             write!(f,  "\n|")?;
             for x in 0..5 {
-                let index = Position::new(x, y).as_u32() as usize;
+                let index = Position::new(x, y).as_usize();
                 let piece = if white_array[index] {
                     'W'
                 } else if black_array[index] {
@@ -261,8 +283,6 @@ impl fmt::Display for Board {
 pub fn bfs(start: Board, end : Board) -> () {
     use std::collections::HashMap;
 
-    println!("Start = \n{}\nEnd =\n{}", start, end);
-
     let end_u32 = end.as_u32();
     let mut next_nodes = vec![Board::new()];
     let mut visited_nodes = HashMap::new();
@@ -279,6 +299,7 @@ pub fn bfs(start: Board, end : Board) -> () {
             if board_u32 == end_u32 {
                 // Found solution.
                 println!("Solution found in {} moves.", num_moves);
+                return ();
                 let mut sol = Vec::new();
                 let mut curr = &end_u32;
                 while *curr != 0 {
@@ -299,9 +320,9 @@ pub fn bfs(start: Board, end : Board) -> () {
                 }
             }
 
-            num_moves += 1;
-            to_move = to_move.invert();
         }
+        num_moves += 1;
+        to_move = to_move.invert();
         next_nodes = new_next_nodes;
     }
 }
@@ -329,8 +350,8 @@ mod tests {
         let white_array = board.get_array(&Color::White);
         let black_array = board.get_array(&Color::Black);
         for i in 0..4 {
-            assert!(white_array[Position::new(0, i).as_u32() as usize]);
-            assert!(black_array[Position::new(4, i).as_u32() as usize]);
+            assert!(white_array[Position::new(0, i).as_usize()]);
+            assert!(black_array[Position::new(4, i).as_usize()]);
         }
     }
 
@@ -339,26 +360,22 @@ mod tests {
         let board = Board::new();
         let threatened_array = board.threatened_array(&Color::White);
         for y in 0..3 {
-            assert!(!threatened_array[Position::new(0, y).as_u32() as usize]);
-            assert!(threatened_array[Position::new(1, y).as_u32() as usize]);
-            assert!(threatened_array[Position::new(2, y).as_u32() as usize]);
-            assert!(!threatened_array[Position::new(4, y).as_u32() as usize]);
+            assert!(!threatened_array[Position::new(0, y).as_usize()]);
+            assert!(threatened_array[Position::new(1, y).as_usize()]);
+            assert!(threatened_array[Position::new(2, y).as_usize()]);
+            assert!(!threatened_array[Position::new(4, y).as_usize()]);
         }
-        assert!(threatened_array[Position::new(3, 0).as_u32() as usize]);
-        assert!(!threatened_array[Position::new(3, 1).as_u32() as usize]);
-        assert!(!threatened_array[Position::new(3, 2).as_u32() as usize]);
-        assert!(threatened_array[Position::new(3, 3).as_u32() as usize]);
+        assert!(threatened_array[Position::new(3, 0).as_usize()]);
+        assert!(!threatened_array[Position::new(3, 1).as_usize()]);
+        assert!(!threatened_array[Position::new(3, 2).as_usize()]);
+        assert!(threatened_array[Position::new(3, 3).as_usize()]);
     }
 
     #[test]
     fn test_new_move() {
         let board = Board::new();
         let next_boards = board.next_boards(&Color::White);
-        for board in next_boards {
-            println!("orig:\n{}", board);
-            println!("copy:\n{}", Board::from_u32(board.as_u32()));
-        }
-        assert_eq!(2, 3);
+        assert_eq!(next_boards.len(), 4);
     }
 
 }
