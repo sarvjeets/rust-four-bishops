@@ -353,14 +353,15 @@ mod tests {
     #[test]
     fn test_new_move() {
         let board = Board::from_pos(
-            [Position::new(4,0), Position::new(3,2), Position::new(4,2), Position::new(4, 3)],
-            [Position::new(0,0), Position::new(0,1), Position::new(1,1), Position::new(3, 0)]);
+            [Position::new(4,0), Position::new(3,2), Position::new(4,2),
+             Position::new(4, 3)],
+            [Position::new(0,0), Position::new(0,1), Position::new(1,1),
+             Position::new(3, 0)]);
         let next_boards = board.next_boards(&Color::Black);
-        println!("{}", board);
+        assert_eq!(next_boards.len(), 4);
         for b in next_boards {
             println!("{}", b);
         }
-        assert_eq!(3, 3);
     }
 
 }
